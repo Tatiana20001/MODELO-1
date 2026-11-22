@@ -1,0 +1,896 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Invernadero 3D Interactivo - Three.js</title>
+    <!-- Tailwind CSS para la interfaz de usuario -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Fuente Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Three.js r128 y OrbitControls -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            margin: 0;
+            overflow: hidden;
+            background-color: #1a241b;
+            user-select: none;
+        }
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+        }
+        /* Efecto cristal esmerilado para paneles UI */
+        .glass-panel {
+            background: rgba(20, 28, 22, 0.72);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.14);
+        }
+    </style>
+</head>
+<body class="relative w-screen h-screen overflow-hidden">
+
+    <!-- Contenedor del Lienzo 3D -->
+    <div id="canvas-container" class="w-full h-full"></div>
+
+    <!-- Panel Superior: Título e Instrucciones -->
+    <div class="absolute top-4 left-4 right-4 sm:right-auto sm:max-w-sm glass-panel text-white p-4 rounded-2xl shadow-2xl pointer-events-auto transition-all">
+        <div class="flex items-center gap-2.5 mb-1">
+            <span class="inline-block w-3 h-3 rounded-full bg-emerald-400 animate-pulse"></span>
+            <h1 class="text-base sm:text-lg font-bold tracking-tight text-emerald-50">Invernadero Botánico 3D</h1>
+        </div>
+        <p class="text-xs text-stone-300 leading-relaxed">
+            Arrastra para rotar, haz scroll o pellizca para acercar y entrar al invernadero. Usa los controles inferiores para cambiar de vista o abrir accesos.
+        </p>
+    </div>
+
+    <!-- Panel Inferior: Controles de Cámara e Interacción -->
+    <div class="absolute bottom-5 left-1/2 -translate-x-1/2 w-[94%] max-w-2xl flex flex-col gap-2.5 pointer-events-none">
+        
+        <!-- Fila de Acciones del Invernadero -->
+        <div class="flex flex-wrap justify-center gap-2 pointer-events-auto">
+            <button id="btn-door" onclick="toggleDoor()" class="glass-panel hover:bg-emerald-600/40 active:scale-95 text-white text-xs sm:text-sm font-medium px-4 py-2.5 rounded-xl shadow-lg transition-all flex items-center gap-2 cursor-pointer border border-emerald-400/30">
+                <svg class="w-4 h-4 text-emerald-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path></svg>
+                <span id="door-label">Cerrar Puerta</span>
+            </button>
+
+            <button id="btn-vent" onclick="toggleRoofVent()" class="glass-panel hover:bg-sky-600/40 active:scale-95 text-white text-xs sm:text-sm font-medium px-4 py-2.5 rounded-xl shadow-lg transition-all flex items-center gap-2 cursor-pointer border border-sky-400/30">
+                <svg class="w-4 h-4 text-sky-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"></path></svg>
+                <span id="vent-label">Cerrar Ventana Techo</span>
+            </button>
+        </div>
+
+        <!-- Fila de Vistas de Cámara -->
+        <div class="glass-panel p-1.5 rounded-2xl shadow-2xl flex flex-wrap sm:flex-nowrap justify-center gap-1.5 pointer-events-auto">
+            <button id="cam-exterior" onclick="setCameraView('exterior')" class="cam-btn flex-1 bg-emerald-600 text-white text-xs sm:text-sm font-semibold py-2.5 px-3 rounded-xl shadow transition-all cursor-pointer">
+                Vista Exterior
+            </button>
+            <button id="cam-interior" onclick="setCameraView('interior')" class="cam-btn flex-1 hover:bg-white/10 text-stone-200 text-xs sm:text-sm font-medium py-2.5 px-3 rounded-xl transition-all cursor-pointer">
+                Interior (Entrada)
+            </button>
+            <button id="cam-aerial" onclick="setCameraView('aerial')" class="cam-btn flex-1 hover:bg-white/10 text-stone-200 text-xs sm:text-sm font-medium py-2.5 px-3 rounded-xl transition-all cursor-pointer">
+                Vista Aérea
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // ==========================================
+        // VARIABLES GLOBALES DE LA ESCENA 3D
+        // ==========================================
+        let scene, camera, renderer, controls;
+        let doorPivot, roofVentPivot;
+        let isDoorOpen = true;
+        let isVentOpen = true;
+        const animatedPlants = [];
+
+        // Parámetros de transición suave de cámara
+        let targetCamPos = new THREE.Vector3(4.5, 2.9, 5.0);
+        let targetLookAt = new THREE.Vector3(0, 1.0, 0);
+        let isCameraTransitioning = false;
+
+        // ==========================================
+        // INICIALIZACIÓN DE ESCENA, LUCES Y CONTROLES
+        // ==========================================
+        function init() {
+            const container = document.getElementById('canvas-container');
+
+            // 1. Escena y atmósfera
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x9ec5e6);
+            scene.fog = new THREE.FogExp2(0x9ec5e6, 0.022);
+
+            // 2. Cámara
+            camera = new THREE.PerspectiveCamera(
+                45,
+                window.innerWidth / window.innerHeight,
+                0.1,
+                120
+            );
+            camera.position.copy(targetCamPos);
+
+            // 3. Renderizador con sombras suaves
+            renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            renderer.toneMappingExposure = 1.08;
+            container.appendChild(renderer.domElement);
+
+            // 4. Controles orbitales (ratón y táctil)
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.target.copy(targetLookAt);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.06;
+            controls.maxPolarAngle = Math.PI / 2 - 0.03;
+            controls.minDistance = 0.4;
+            controls.maxDistance = 18;
+            controls.addEventListener('start', () => {
+                isCameraTransitioning = false;
+            });
+
+            // 5. Iluminación natural de jardín
+            const hemiLight = new THREE.HemisphereLight(0xeef7ff, 0x3b5932, 0.85);
+            hemiLight.position.set(0, 15, 0);
+            scene.add(hemiLight);
+
+            const sunLight = new THREE.DirectionalLight(0xfff4dc, 1.35);
+            sunLight.position.set(7, 11, 6);
+            sunLight.castShadow = true;
+            sunLight.shadow.mapSize.width = 2048;
+            sunLight.shadow.mapSize.height = 2048;
+            sunLight.shadow.camera.near = 1;
+            sunLight.shadow.camera.far = 30;
+            const d = 6.5;
+            sunLight.shadow.camera.left = -d;
+            sunLight.shadow.camera.right = d;
+            sunLight.shadow.camera.top = d;
+            sunLight.shadow.camera.bottom = -d;
+            sunLight.shadow.bias = -0.0005;
+            scene.add(sunLight);
+
+            // 6. Construir entorno, invernadero y cultivos en el suelo
+            buildEnvironment();
+            buildGreenhouse();
+            buildInteriorFurnitureAndPlants();
+
+            window.addEventListener('resize', onWindowResize);
+        }
+
+        // ==========================================
+        // ENTORNO EXTERIOR: CÉSPED, SENDERO Y ÁRBOLES
+        // ==========================================
+        function buildEnvironment() {
+            // Pradera de césped
+            const grassMat = new THREE.MeshStandardMaterial({
+                color: 0x4b7a38,
+                roughness: 0.92
+            });
+            const ground = new THREE.Mesh(new THREE.CircleGeometry(45, 48), grassMat);
+            ground.rotation.x = -Math.PI / 2;
+            ground.receiveShadow = true;
+            scene.add(ground);
+
+            // Sendero de piedras frente a la puerta
+            const stoneMat = new THREE.MeshStandardMaterial({
+                color: 0xa8a29e,
+                roughness: 0.88
+            });
+            const stones = [
+                { x: 0.05, z: 2.15, rx: 0.36, rz: 0.24 },
+                { x: -0.12, z: 2.68, rx: 0.42, rz: 0.28 },
+                { x: 0.14, z: 3.25, rx: 0.38, rz: 0.26 },
+                { x: -0.04, z: 3.82, rx: 0.44, rz: 0.30 }
+            ];
+            stones.forEach(s => {
+                const geo = new THREE.CylinderGeometry(1, 1.05, 0.04, 9);
+                geo.scale(s.rx, 1, s.rz);
+                const stone = new THREE.Mesh(geo, stoneMat);
+                stone.position.set(s.x, 0.02, s.z);
+                stone.receiveShadow = true;
+                scene.add(stone);
+            });
+
+            // Árboles y arbustos perimetrales de fondo
+            const trunkMat = new THREE.MeshStandardMaterial({ color: 0x5c4033, roughness: 0.9 });
+            const foliageMats = [
+                new THREE.MeshStandardMaterial({ color: 0x36662c, roughness: 0.8 }),
+                new THREE.MeshStandardMaterial({ color: 0x457d36, roughness: 0.8 }),
+                new THREE.MeshStandardMaterial({ color: 0x2c5424, roughness: 0.85 })
+            ];
+
+            const treeCoords = [
+                [-5.5, -4.5, 1.2], [-3.8, -6.2, 1.4], [0.5, -6.8, 1.3],
+                [4.6, -5.4, 1.25], [6.2, -2.0, 1.1], [-6.4, 1.5, 1.15],
+                [6.0, 3.8, 1.0], [-5.2, 5.2, 0.95]
+            ];
+
+            treeCoords.forEach(([tx, tz, scale], idx) => {
+                const tree = new THREE.Group();
+                const trunk = new THREE.Mesh(
+                    new THREE.CylinderGeometry(0.12 * scale, 0.18 * scale, 1.4 * scale, 7),
+                    trunkMat
+                );
+                trunk.position.y = 0.7 * scale;
+                trunk.castShadow = true;
+                tree.add(trunk);
+
+                const mat = foliageMats[idx % foliageMats.length];
+                const crown1 = new THREE.Mesh(new THREE.DodecahedronGeometry(1.05 * scale, 1), mat);
+                crown1.position.y = 1.95 * scale;
+                crown1.castShadow = true;
+                const crown2 = new THREE.Mesh(new THREE.DodecahedronGeometry(0.78 * scale, 1), mat);
+                crown2.position.set(0.45 * scale, 2.35 * scale, 0.25 * scale);
+                crown2.castShadow = true;
+
+                tree.add(crown1, crown2);
+                tree.position.set(tx, 0, tz);
+                scene.add(tree);
+            });
+        }
+
+        // ==========================================
+        // ESTRUCTURA DEL INVERNADERO (ALUMINIO Y VIDRIO)
+        // ==========================================
+        function buildGreenhouse() {
+            const ghGroup = new THREE.Group();
+
+            // Dimensiones principales del invernadero pequeño hogareño
+            const W = 2.40;       // Ancho total (X: -1.20 a +1.20)
+            const L = 3.60;       // Largo total (Z: -1.80 a +1.80)
+            const wallH = 1.45;   // Altura de paredes laterales
+            const roofH = 0.78;   // Altura adicional de cumbrera
+            const halfW = W / 2;
+            const halfL = L / 2;
+            const roofSlopeLen = Math.hypot(halfW, roofH);
+            const roofAngle = Math.atan2(roofH, halfW);
+
+            // Materiales estructurales
+            const aluMat = new THREE.MeshStandardMaterial({
+                color: 0xf1f5f9,
+                metalness: 0.55,
+                roughness: 0.32
+            });
+            const cornerCapMat = new THREE.MeshStandardMaterial({
+                color: 0x1e293b,
+                roughness: 0.6
+            });
+            const glassMat = new THREE.MeshPhysicalMaterial({
+                color: 0xe6f7ff,
+                transparent: true,
+                opacity: 0.24,
+                roughness: 0.08,
+                metalness: 0.05,
+                reflectivity: 0.85,
+                side: THREE.DoubleSide,
+                depthWrite: false
+            });
+            const floorMat = new THREE.MeshStandardMaterial({
+                color: 0x6b5c4c,
+                roughness: 0.95
+            });
+
+            // Helper para crear un perfil de aluminio entre dos puntos 3D
+            function addBeam(p1, p2, thick = 0.036, targetGroup = ghGroup) {
+                const start = new THREE.Vector3(...p1);
+                const end = new THREE.Vector3(...p2);
+                const dir = new THREE.Vector3().subVectors(end, start);
+                const len = dir.length();
+                const beam = new THREE.Mesh(
+                    new THREE.BoxGeometry(thick, len, thick),
+                    aluMat
+                );
+                beam.position.copy(start).addScaledVector(dir, 0.5);
+                beam.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+                beam.castShadow = true;
+                targetGroup.add(beam);
+            }
+
+            // 1. Base interior de tierra compactada y zócalo metálico
+            const interiorFloor = new THREE.Mesh(
+                new THREE.BoxGeometry(W - 0.04, 0.03, L - 0.04),
+                floorMat
+            );
+            interiorFloor.position.set(0, 0.015, 0);
+            interiorFloor.receiveShadow = true;
+            ghGroup.add(interiorFloor);
+
+            const baseH = 0.08;
+            const baseThick = 0.055;
+            const doorW = 0.76;
+            const doorH = 1.62;
+
+            // Zócalo lateral izquierdo y derecho
+            [-halfW, halfW].forEach(x => {
+                const sideBase = new THREE.Mesh(new THREE.BoxGeometry(baseThick, baseH, L + baseThick), aluMat);
+                sideBase.position.set(x, baseH / 2, 0);
+                sideBase.castShadow = true;
+                ghGroup.add(sideBase);
+            });
+            // Zócalo trasero
+            const backBase = new THREE.Mesh(new THREE.BoxGeometry(W, baseH, baseThick), aluMat);
+            backBase.position.set(0, baseH / 2, -halfL);
+            backBase.castShadow = true;
+            ghGroup.add(backBase);
+
+            // Zócalo frontal dividido a ambos lados de la entrada
+            const frontSideSpan = (W - doorW) / 2;
+            [-1, 1].forEach(side => {
+                const fb = new THREE.Mesh(new THREE.BoxGeometry(frontSideSpan, baseH, baseThick), aluMat);
+                fb.position.set(side * (doorW / 2 + frontSideSpan / 2), baseH / 2, halfL);
+                fb.castShadow = true;
+                ghGroup.add(fb);
+            });
+
+            // 2. Cerchas (pórticos) a lo largo del eje Z (5 secciones / 4 módulos)
+            const bays = 4;
+            const zSections = [];
+            for (let i = 0; i <= bays; i++) {
+                zSections.push(-halfL + (L / bays) * i);
+            }
+
+            zSections.forEach((z, idx) => {
+                // Postes verticales laterales
+                addBeam([-halfW, baseH, z], [-halfW, wallH, z]);
+                addBeam([halfW, baseH, z], [halfW, wallH, z]);
+
+                // Cabios inclinados del techo
+                addBeam([-halfW, wallH, z], [0, wallH + roofH, z]);
+                addBeam([halfW, wallH, z], [0, wallH + roofH, z]);
+
+                // Conectores negros en aleros y cumbrera de extremos
+                if (idx === 0 || idx === bays) {
+                    [[-halfW, wallH, z], [halfW, wallH, z], [0, wallH + roofH, z]].forEach(([cx, cy, cz]) => {
+                        const cap = new THREE.Mesh(new THREE.BoxGeometry(0.065, 0.065, 0.065), cornerCapMat);
+                        cap.position.set(cx, cy, cz);
+                        ghGroup.add(cap);
+                    });
+                }
+            });
+
+            // 3. Largueros longitudinales (aleros, cumbrera y correas intermedias de techo)
+            addBeam([-halfW, wallH, -halfL], [-halfW, wallH, halfL], 0.042);
+            addBeam([halfW, wallH, -halfL], [halfW, wallH, halfL], 0.042);
+            addBeam([0, wallH + roofH, -halfL], [0, wallH + roofH, halfL], 0.045);
+
+            // Correas medias en ambos faldones del techo
+            [-0.5, 0.5].forEach(frac => {
+                const px = frac * W;
+                const py = wallH + roofH * (1 - Math.abs(frac) * 2);
+                addBeam([px, py, -halfL], [px, py, halfL], 0.026);
+            });
+
+            // 4. Estructura frontal (marco de puerta y hastial) y trasera
+            // Frontal (z = +halfL)
+            addBeam([-doorW / 2, baseH, halfL], [-doorW / 2, doorH, halfL], 0.036);
+            addBeam([doorW / 2, baseH, halfL], [doorW / 2, doorH, halfL], 0.036);
+            addBeam([-doorW / 2, doorH, halfL], [doorW / 2, doorH, halfL], 0.036);
+            addBeam([-doorW / 2, doorH, halfL], [-doorW / 2, wallH + roofH * (1 - doorW / W), halfL], 0.028);
+            addBeam([doorW / 2, doorH, halfL], [doorW / 2, wallH + roofH * (1 - doorW / W), halfL], 0.028);
+
+            // Trasera (z = -halfL)
+            addBeam([-doorW / 2, baseH, -halfL], [-doorW / 2, wallH + roofH * (1 - doorW / W), -halfL], 0.03);
+            addBeam([doorW / 2, baseH, -halfL], [doorW / 2, wallH + roofH * (1 - doorW / W), -halfL], 0.03);
+            addBeam([-halfW, wallH, -halfL], [halfW, wallH, -halfL], 0.028);
+
+            // 5. Paneles de vidrio transparentes (paredes laterales, techo, frente y fondo)
+            // Paredes laterales
+            [-halfW, halfW].forEach(x => {
+                const sideGlass = new THREE.Mesh(
+                    new THREE.PlaneGeometry(L, wallH - baseH),
+                    glassMat
+                );
+                sideGlass.rotation.y = Math.PI / 2;
+                sideGlass.position.set(x, baseH + (wallH - baseH) / 2, 0);
+                ghGroup.add(sideGlass);
+            });
+
+            // Faldón derecho completo del techo
+            const rightRoofGlass = new THREE.Mesh(
+                new THREE.PlaneGeometry(roofSlopeLen, L),
+                glassMat
+            );
+            rightRoofGlass.rotation.x = -Math.PI / 2;
+            rightRoofGlass.rotation.y = -roofAngle;
+            rightRoofGlass.position.set(halfW / 2, wallH + roofH / 2, 0);
+            ghGroup.add(rightRoofGlass);
+
+            // Faldón izquierdo del techo (dejando hueco en el módulo 2 para la ventana abatible)
+            const bayLen = L / bays;
+            for (let b = 0; b < bays; b++) {
+                const bz = -halfL + bayLen * (b + 0.5);
+                if (b === 1) {
+                    // Parte inferior fija bajo la ventana del techo
+                    const lowerGlass = new THREE.Mesh(
+                        new THREE.PlaneGeometry(roofSlopeLen * 0.48, bayLen),
+                        glassMat
+                    );
+                    lowerGlass.rotation.x = -Math.PI / 2;
+                    lowerGlass.rotation.y = roofAngle;
+                    lowerGlass.position.set(-halfW * 0.76, wallH + roofH * 0.24, bz);
+                    ghGroup.add(lowerGlass);
+
+                    // Ventana abatible superior en el techo
+                    roofVentPivot = new THREE.Group();
+                    roofVentPivot.position.set(0, wallH + roofH, bz);
+
+                    const ventGroup = new THREE.Group();
+                    ventGroup.rotation.z = roofAngle;
+
+                    const ventLen = roofSlopeLen * 0.52;
+                    const ventGlass = new THREE.Mesh(
+                        new THREE.PlaneGeometry(ventLen, bayLen - 0.03),
+                        glassMat
+                    );
+                    ventGlass.rotation.x = -Math.PI / 2;
+                    ventGlass.position.set(-ventLen / 2, 0, 0);
+                    ventGroup.add(ventGlass);
+
+                    // Marco de la ventana abatible
+                    addBeam([0, 0, -(bayLen - 0.03) / 2], [-ventLen, 0, -(bayLen - 0.03) / 2], 0.024, ventGroup);
+                    addBeam([0, 0, (bayLen - 0.03) / 2], [-ventLen, 0, (bayLen - 0.03) / 2], 0.024, ventGroup);
+                    addBeam([-ventLen, 0, -(bayLen - 0.03) / 2], [-ventLen, 0, (bayLen - 0.03) / 2], 0.024, ventGroup);
+
+                    roofVentPivot.add(ventGroup);
+                    ghGroup.add(roofVentPivot);
+                } else {
+                    const bayRoofGlass = new THREE.Mesh(
+                        new THREE.PlaneGeometry(roofSlopeLen, bayLen),
+                        glassMat
+                    );
+                    bayRoofGlass.rotation.x = -Math.PI / 2;
+                    bayRoofGlass.rotation.y = roofAngle;
+                    bayRoofGlass.position.set(-halfW / 2, wallH + roofH / 2, bz);
+                    ghGroup.add(bayRoofGlass);
+                }
+            }
+
+            // Vidrios laterales del frente (a izquierda y derecha de la puerta)
+            [-1, 1].forEach(side => {
+                const fGlass = new THREE.Mesh(
+                    new THREE.PlaneGeometry(frontSideSpan, wallH - baseH),
+                    glassMat
+                );
+                fGlass.position.set(side * (doorW / 2 + frontSideSpan / 2), baseH + (wallH - baseH) / 2, halfL);
+                ghGroup.add(fGlass);
+            });
+
+            // Triángulos superiores de hastial (frontal y trasero) y muro trasero
+            const backWallGlass = new THREE.Mesh(
+                new THREE.PlaneGeometry(W, wallH - baseH),
+                glassMat
+            );
+            backWallGlass.position.set(0, baseH + (wallH - baseH) / 2, -halfL);
+            ghGroup.add(backWallGlass);
+
+            const gableShape = new THREE.Shape();
+            gableShape.moveTo(-halfW, wallH);
+            gableShape.lineTo(halfW, wallH);
+            gableShape.lineTo(0, wallH + roofH);
+            gableShape.closePath();
+            const gableGeo = new THREE.ShapeGeometry(gableShape);
+
+            const backGable = new THREE.Mesh(gableGeo, glassMat);
+            backGable.position.z = -halfL;
+            ghGroup.add(backGable);
+
+            // Hastial frontal por encima de la puerta
+            const frontGableShape = new THREE.Shape();
+            frontGableShape.moveTo(-halfW, wallH);
+            frontGableShape.lineTo(-doorW / 2, wallH);
+            frontGableShape.lineTo(-doorW / 2, doorH);
+            frontGableShape.lineTo(doorW / 2, doorH);
+            frontGableShape.lineTo(doorW / 2, wallH);
+            frontGableShape.lineTo(halfW, wallH);
+            frontGableShape.lineTo(0, wallH + roofH);
+            frontGableShape.closePath();
+            const frontGable = new THREE.Mesh(new THREE.ShapeGeometry(frontGableShape), glassMat);
+            frontGable.position.z = halfL;
+            ghGroup.add(frontGable);
+
+            // 6. Puerta frontal batiente interactiva
+            doorPivot = new THREE.Group();
+            doorPivot.position.set(-doorW / 2, baseH, halfL + 0.01);
+
+            const leafH = doorH - baseH;
+            // Marco perimetral y travesaños de la puerta
+            addBeam([0, 0, 0], [0, leafH, 0], 0.032, doorPivot);
+            addBeam([doorW, 0, 0], [doorW, leafH, 0], 0.032, doorPivot);
+            addBeam([0, 0, 0], [doorW, 0, 0], 0.032, doorPivot);
+            addBeam([0, leafH, 0], [doorW, leafH, 0], 0.032, doorPivot);
+            addBeam([0, leafH * 0.45, 0], [doorW, leafH * 0.45, 0], 0.024, doorPivot);
+            addBeam([0, leafH * 0.72, 0], [doorW, leafH * 0.72, 0], 0.024, doorPivot);
+
+            // Manija oscura de la puerta
+            const handle = new THREE.Mesh(
+                new THREE.BoxGeometry(0.025, 0.11, 0.05),
+                cornerCapMat
+            );
+            handle.position.set(doorW - 0.06, leafH * 0.52, 0.02);
+            doorPivot.add(handle);
+
+            // Vidrio de la puerta
+            const doorGlass = new THREE.Mesh(
+                new THREE.PlaneGeometry(doorW - 0.03, leafH - 0.03),
+                glassMat
+            );
+            doorGlass.position.set(doorW / 2, leafH / 2, 0);
+            doorPivot.add(doorGlass);
+
+            ghGroup.add(doorPivot);
+            scene.add(ghGroup);
+        }
+
+        // ==========================================
+        // CANTEROS EN EL SUELO Y PLANTAS DE TOMATE
+        // ==========================================
+        function buildInteriorFurnitureAndPlants() {
+            // Materiales para bordes y pasillos de madera clara, tierra fértil y tutores
+            const lightWoodMat = new THREE.MeshStandardMaterial({
+                color: 0xd4a36a,
+                roughness: 0.72
+            });
+            const walkwayWoodMat = new THREE.MeshStandardMaterial({
+                color: 0xe3b97b,
+                roughness: 0.68
+            });
+            const darkSoilMat = new THREE.MeshStandardMaterial({
+                color: 0x3b2618,
+                roughness: 0.96
+            });
+            const stakeWoodMat = new THREE.MeshStandardMaterial({
+                color: 0x8a5a36,
+                roughness: 0.85
+            });
+            const tieMat = new THREE.MeshStandardMaterial({
+                color: 0xdbeafe,
+                roughness: 0.5
+            });
+
+            // Materiales de la planta de tomate (tallos, hojas y frutos)
+            const stemGreenMat = new THREE.MeshStandardMaterial({
+                color: 0x3a7d34,
+                roughness: 0.65
+            });
+            const leafGreens = [
+                new THREE.MeshStandardMaterial({ color: 0x357a32, roughness: 0.55, side: THREE.DoubleSide }),
+                new THREE.MeshStandardMaterial({ color: 0x48963e, roughness: 0.52, side: THREE.DoubleSide }),
+                new THREE.MeshStandardMaterial({ color: 0x2b6329, roughness: 0.60, side: THREE.DoubleSide })
+            ];
+            const ripeTomatoMat = new THREE.MeshStandardMaterial({
+                color: 0xdc2626,
+                roughness: 0.28,
+                metalness: 0.05
+            });
+            const unripeTomatoMat = new THREE.MeshStandardMaterial({
+                color: 0x84cc16,
+                roughness: 0.35,
+                metalness: 0.02
+            });
+
+            const bedLength = 3.05;
+            const bedZCenter = -0.10;
+            const bedWidth = 0.36;
+            const bedHeight = 0.09;
+
+            // Posiciones X de 4 surcos paralelos (2 a la izquierda, 2 a la derecha del pasillo central)
+            const rowXPositions = [-0.96, -0.46, 0.46, 0.96];
+
+            // Pasillos transitables de madera clara (pasillo central y pasillos entre surcos)
+            const walkwaySpecs = [
+                { x: 0.0,   w: 0.48 }, // Pasillo central amplio frente a la puerta
+                { x: -0.71, w: 0.14 }, // Pasillo estrecho izquierdo
+                { x: 0.71,  w: 0.14 }  // Pasillo estrecho derecho
+            ];
+
+            walkwaySpecs.forEach(wk => {
+                const plankCount = Math.floor(bedLength / 0.18);
+                const plankDepth = (bedLength / plankCount) - 0.012;
+                for (let i = 0; i < plankCount; i++) {
+                    const pz = (bedZCenter - bedLength / 2) + (bedLength / plankCount) * (i + 0.5);
+                    const plank = new THREE.Mesh(
+                        new THREE.BoxGeometry(wk.w, 0.025, plankDepth),
+                        walkwayWoodMat
+                    );
+                    plank.position.set(wk.x, 0.038, pz);
+                    plank.receiveShadow = true;
+                    scene.add(plank);
+                }
+            });
+
+            // Función para construir un cantero/surco delimitado por listones de madera clara
+            function createSoilBed(xCenter) {
+                const bedGroup = new THREE.Group();
+
+                // Tierra oscura fértil interior
+                const soilMesh = new THREE.Mesh(
+                    new THREE.BoxGeometry(bedWidth - 0.04, bedHeight * 0.85, bedLength - 0.04),
+                    darkSoilMat
+                );
+                soilMesh.position.set(0, 0.03 + (bedHeight * 0.85) / 2, 0);
+                soilMesh.receiveShadow = true;
+                bedGroup.add(soilMesh);
+
+                // Listones laterales largos de madera clara
+                const sideGeo = new THREE.BoxGeometry(0.028, bedHeight, bedLength);
+                const leftBoard = new THREE.Mesh(sideGeo, lightWoodMat);
+                leftBoard.position.set(-bedWidth / 2 + 0.014, 0.03 + bedHeight / 2, 0);
+                leftBoard.castShadow = true;
+                leftBoard.receiveShadow = true;
+
+                const rightBoard = new THREE.Mesh(sideGeo, lightWoodMat);
+                rightBoard.position.set(bedWidth / 2 - 0.014, 0.03 + bedHeight / 2, 0);
+                rightBoard.castShadow = true;
+                rightBoard.receiveShadow = true;
+
+                // Listones frontales y traseros de cierre
+                const endGeo = new THREE.BoxGeometry(bedWidth, bedHeight, 0.028);
+                const frontBoard = new THREE.Mesh(endGeo, lightWoodMat);
+                frontBoard.position.set(0, 0.03 + bedHeight / 2, bedLength / 2 - 0.014);
+                frontBoard.castShadow = true;
+                frontBoard.receiveShadow = true;
+
+                const backBoard = new THREE.Mesh(endGeo, lightWoodMat);
+                backBoard.position.set(0, 0.03 + bedHeight / 2, -bedLength / 2 + 0.014);
+                backBoard.castShadow = true;
+                backBoard.receiveShadow = true;
+
+                bedGroup.add(leftBoard, rightBoard, frontBoard, backBoard);
+                bedGroup.position.set(xCenter, 0, bedZCenter);
+                scene.add(bedGroup);
+            }
+
+            // Crear los 4 surcos de cultivo en el suelo
+            rowXPositions.forEach(rx => createSoilBed(rx));
+
+            // Función para crear una planta de tomate alta con tutor de madera, hojas y racimos
+            function createTomatoPlant(x, z, heightScale = 1.0, seed = 0) {
+                const plantRoot = new THREE.Group();
+                const soilTopY = 0.03 + bedHeight * 0.82;
+                const totalH = 1.18 * heightScale;
+
+                // 1. Tutor o vara de madera clavada en el suelo (fija, no se mueve con el viento)
+                const stakeH = totalH + 0.14;
+                const stake = new THREE.Mesh(
+                    new THREE.CylinderGeometry(0.011, 0.014, stakeH, 7),
+                    stakeWoodMat
+                );
+                stake.position.set(-0.022, soilTopY + stakeH / 2 - 0.02, -0.015);
+                stake.castShadow = true;
+                plantRoot.add(stake);
+
+                // Amarres / anillos de sujeción entre el tutor y el tallo
+                [0.32, 0.68, 1.02].forEach(ratio => {
+                    const tieY = soilTopY + totalH * ratio;
+                    if (tieY < soilTopY + stakeH - 0.06) {
+                        const tie = new THREE.Mesh(
+                            new THREE.TorusGeometry(0.022, 0.0045, 6, 12),
+                            tieMat
+                        );
+                        tie.rotation.x = Math.PI / 2;
+                        tie.position.set(-0.01, tieY, -0.007);
+                        plantRoot.add(tie);
+                    }
+                });
+
+                // 2. Grupo flexible de la planta (tallo, ramas, hojas y tomates) que mece la brisa
+                const livingPlant = new THREE.Group();
+                livingPlant.position.set(0.008, soilTopY, 0.005);
+
+                // Tallo principal verde segmentado ligeramente orgánico
+                const mainStem = new THREE.Mesh(
+                    new THREE.CylinderGeometry(0.009, 0.016, totalH, 8),
+                    stemGreenMat
+                );
+                mainStem.position.y = totalH / 2;
+                mainStem.castShadow = true;
+                livingPlant.add(mainStem);
+
+                // Niveles de ramas laterales, hojas compuestas y racimos de tomates
+                const levels = 7;
+                for (let lvl = 1; lvl <= levels; lvl++) {
+                    const t = lvl / (levels + 0.5);
+                    const yPos = totalH * t;
+                    const branchAngle = (lvl * 2.15 + seed) % (Math.PI * 2);
+                    const branchLen = (0.16 - t * 0.05) * heightScale;
+                    const leafMat = leafGreens[(lvl + Math.floor(seed)) % leafGreens.length];
+
+                    // Rama lateral
+                    const branch = new THREE.Mesh(
+                        new THREE.CylinderGeometry(0.003, 0.005, branchLen, 5),
+                        stemGreenMat
+                    );
+                    branch.position.set(
+                        Math.cos(branchAngle) * (branchLen * 0.45),
+                        yPos + 0.02,
+                        Math.sin(branchAngle) * (branchLen * 0.45)
+                    );
+                    branch.rotation.z = -Math.cos(branchAngle) * 1.05;
+                    branch.rotation.x = Math.sin(branchAngle) * 1.05;
+                    livingPlant.add(branch);
+
+                    // Foliolos (hojas compuestas características de la tomatera)
+                    for (let f = 0; f < 3; f++) {
+                        const dist = (0.05 + f * 0.045) * heightScale;
+                        const leafGeo = new THREE.SphereGeometry(0.036 * heightScale, 7, 5);
+                        leafGeo.scale(0.65, 1.45, 0.14);
+                        const leaf = new THREE.Mesh(leafGeo, leafMat);
+                        const sideOffset = (f % 2 === 0 ? 1 : -1) * 0.025;
+                        leaf.position.set(
+                            Math.cos(branchAngle) * dist - Math.sin(branchAngle) * sideOffset,
+                            yPos + 0.03 - f * 0.008,
+                            Math.sin(branchAngle) * dist + Math.cos(branchAngle) * sideOffset
+                        );
+                        leaf.rotation.y = -branchAngle + (f - 1) * 0.4;
+                        leaf.rotation.z = -0.85;
+                        leaf.castShadow = true;
+                        livingPlant.add(leaf);
+                    }
+
+                    // Racimos de tomates colgando en niveles medios (entre 25% y 82% de altura)
+                    if (lvl >= 2 && lvl <= 6) {
+                        const clusterAngle = branchAngle + Math.PI * 0.72;
+                        const clusterDist = 0.065 * heightScale;
+                        const cx = Math.cos(clusterAngle) * clusterDist;
+                        const cz = Math.sin(clusterAngle) * clusterDist;
+
+                        // Pequeño pedúnculo colgante
+                        const peduncle = new THREE.Mesh(
+                            new THREE.CylinderGeometry(0.002, 0.0025, 0.045, 4),
+                            stemGreenMat
+                        );
+                        peduncle.position.set(cx, yPos - 0.015, cz);
+                        livingPlant.add(peduncle);
+
+                        // 2 o 3 tomates por racimo (rojos abajo, verdes arriba)
+                        const fruitsInCluster = 3;
+                        for (let fr = 0; fr < fruitsInCluster; fr++) {
+                            const isRipe = (lvl <= 4 && fr < 2) || (lvl === 5 && fr === 0);
+                            const fruitRadius = (isRipe ? 0.026 : 0.020) * heightScale;
+                            const tomatoGeo = new THREE.SphereGeometry(fruitRadius, 10, 8);
+                            tomatoGeo.scale(1.05, 0.92, 1.05);
+
+                            const tomato = new THREE.Mesh(
+                                tomatoGeo,
+                                isRipe ? ripeTomatoMat : unripeTomatoMat
+                            );
+                            const fAngle = (fr / fruitsInCluster) * Math.PI * 2 + seed;
+                            tomato.position.set(
+                                cx + Math.cos(fAngle) * 0.018 * heightScale,
+                                yPos - 0.032 - fr * 0.012 * heightScale,
+                                cz + Math.sin(fAngle) * 0.018 * heightScale
+                            );
+                            tomato.castShadow = true;
+                            livingPlant.add(tomato);
+                        }
+                    }
+                }
+
+                plantRoot.add(livingPlant);
+                plantRoot.position.set(x, 0, z);
+                scene.add(plantRoot);
+
+                // Registrar la parte viva para la animación sutil de brisa
+                animatedPlants.push({ mesh: livingPlant, phase: seed });
+            }
+
+            // Sembrar 6 plantas de tomate a lo largo de cada uno de los 4 surcos (24 tomateras en total)
+            const plantsPerRow = 6;
+            const zStart = bedZCenter - bedLength / 2 + 0.26;
+            const zStep = (bedLength - 0.52) / (plantsPerRow - 1);
+
+            rowXPositions.forEach((rx, rIdx) => {
+                // Las hileras exteriores son ligeramente más bajas para ajustarse a la inclinación del techo
+                const isOuterRow = Math.abs(rx) > 0.7;
+                for (let p = 0; p < plantsPerRow; p++) {
+                    const pz = zStart + p * zStep + ((rIdx % 2) * 0.06 - 0.03);
+                    const jitterX = (Math.sin(p * 3.1 + rIdx) * 0.025);
+                    const baseHeight = isOuterRow ? 0.88 : 1.05;
+                    const hScale = baseHeight + Math.cos(p * 1.7 + rIdx) * 0.10;
+                    createTomatoPlant(rx + jitterX, pz, hScale, rIdx * 5 + p * 1.3);
+                }
+            });
+        }
+
+        // ==========================================
+        // CONTROLES DE CÁMARA E INTERACCIÓN UI
+        // ==========================================
+        function setCameraView(viewName) {
+            isCameraTransitioning = true;
+
+            // Actualizar estilos visuales de botones activos
+            document.querySelectorAll('.cam-btn').forEach(btn => {
+                btn.classList.remove('bg-emerald-600', 'font-semibold', 'shadow', 'text-white');
+                btn.classList.add('hover:bg-white/10', 'text-stone-200', 'font-medium');
+            });
+
+            const activeBtn = document.getElementById(`cam-${viewName}`);
+            if (activeBtn) {
+                activeBtn.classList.remove('hover:bg-white/10', 'text-stone-200', 'font-medium');
+                activeBtn.classList.add('bg-emerald-600', 'font-semibold', 'shadow', 'text-white');
+            }
+
+            if (viewName === 'exterior') {
+                targetCamPos.set(4.5, 2.9, 5.0);
+                targetLookAt.set(0, 1.0, 0);
+            } else if (viewName === 'interior') {
+                // Posición justo dentro de la entrada mirando el pasillo central flanqueado por las tomateras
+                targetCamPos.set(0.0, 1.15, 1.48);
+                targetLookAt.set(0.0, 0.72, -0.95);
+            } else if (viewName === 'aerial') {
+                targetCamPos.set(3.8, 6.2, 4.2);
+                targetLookAt.set(0, 0.8, 0);
+            }
+        }
+
+        function toggleDoor() {
+            isDoorOpen = !isDoorOpen;
+            const label = document.getElementById('door-label');
+            label.textContent = isDoorOpen ? 'Cerrar Puerta' : 'Abrir Puerta';
+        }
+
+        function toggleRoofVent() {
+            isVentOpen = !isVentOpen;
+            const label = document.getElementById('vent-label');
+            label.textContent = isVentOpen ? 'Cerrar Ventana Techo' : 'Abrir Ventana Techo';
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // ==========================================
+        // BUCLE DE ANIMACIÓN PRINCIPAL
+        // ==========================================
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const elapsed = clock.getElapsedTime();
+
+            // 1. Interpolación suave de la puerta
+            const desiredDoorRot = isDoorOpen ? -Math.PI * 0.58 : 0;
+            doorPivot.rotation.y += (desiredDoorRot - doorPivot.rotation.y) * 0.08;
+
+            // 2. Interpolación suave de la ventana del techo
+            const desiredVentRot = isVentOpen ? -0.38 : 0;
+            roofVentPivot.rotation.z += (desiredVentRot - roofVentPivot.rotation.z) * 0.08;
+
+            // 3. Brisa suave en las plantas interiores
+            for (let i = 0; i < animatedPlants.length; i++) {
+                const p = animatedPlants[i];
+                p.mesh.rotation.z = Math.sin(elapsed * 1.4 + p.phase) * 0.025;
+                p.mesh.rotation.x = Math.cos(elapsed * 1.1 + p.phase) * 0.02;
+            }
+
+            // 4. Transición fluida de cámara al pulsar los botones de vista
+            if (isCameraTransitioning) {
+                camera.position.lerp(targetCamPos, 0.055);
+                controls.target.lerp(targetLookAt, 0.055);
+                if (camera.position.distanceTo(targetCamPos) < 0.03) {
+                    isCameraTransitioning = false;
+                }
+            }
+
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        // Iniciar al cargar la ventana
+        window.onload = function () {
+            init();
+            animate();
+        };
+    </script>
+</body>
+</html>
